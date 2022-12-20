@@ -12,15 +12,21 @@ from tqdm import tqdm
 import section_parser as sp
 
 parser = argparse.ArgumentParser()
-parser.add_argument('--reports_path',
-                    required=True,
-                    help=('Path to file with radiology reports,'
-                          ' e.g. /data/mimic-cxr/files'))
-parser.add_argument('--output_path',
-                    required=True,
-                    help='Path to output CSV files.')
-parser.add_argument('--no_split', action='store_true',
-                    help='Do not output batched CSV files.')
+parser.add_argument(
+    "--reports_path",
+    required=True,
+    help=("Path to file with radiology reports," " e.g. /data/mimic-cxr/files"),
+)
+parser.add_argument("--output_path", required=True, help="Path to output CSV files.")
+parser.add_argument(
+    "--no_split", action="store_true", help="Do not output batched CSV files."
+)
+parser.add_argument(
+    "--sections",
+    nargs="+",
+    default=["impression", "findings", "last_paragraph", "comparison", "indication"],
+    help="Sections of the reports to include."
+)
 
 
 def list_rindex(l, s):
@@ -43,8 +49,7 @@ def main(args):
 
     # get all higher up folders (p00, p01, etc)
     p_grp_folders = os.listdir(reports_path)
-    p_grp_folders = [p for p in p_grp_folders
-                     if p.startswith('p') and len(p) == 3]
+    p_grp_folders = [p for p in p_grp_folders if p.startswith("p") and len(p) == 3]
     p_grp_folders.sort()
 
     # patient_studies will hold the text for use in NLP labeling
@@ -57,7 +62,7 @@ def main(args):
         # get patient folders, usually around ~6k per group folder
         cxr_path = reports_path / p_grp
         p_folders = os.listdir(cxr_path)
-        p_folders = [p for p in p_folders if p.startswith('p')]
+        p_folders = [p for p in p_folders if p.startswith("p")]
         p_folders.sort()
 
         # For each patient in this grouping folder
@@ -67,13 +72,12 @@ def main(args):
 
             # get the filename for all their free-text reports
             studies = os.listdir(patient_path)
-            studies = [s for s in studies
-                       if s.endswith('.txt') and s.startswith('s')]
+            studies = [s for s in studies if s.endswith(".txt") and s.startswith("s")]
 
             for s in studies:
                 # load in the free-text report
-                with open(patient_path / s, 'r') as fp:
-                    text = ''.join(fp.readlines())
+                with open(patient_path / s, "r") as fp:
+                    text = "".join(fp.readlines())
 
                 # get study string name without the txt extension
                 s_stem = s[0:-4]
@@ -81,13 +85,11 @@ def main(args):
                 # custom rules for some poorly formatted reports
                 if s_stem in custom_indices:
                     idx = custom_indices[s_stem]
-                    patient_studies.append([s_stem, text[idx[0]:idx[1]]])
+                    patient_studies.append([s_stem, text[idx[0] : idx[1]]])
                     continue
 
                 # split text into sections
-                sections, section_names, section_idx = sp.section_text(
-                    text
-                )
+                sections, section_names, section_idx = sp.section_text(text)
 
                 # check to see if this has mis-named sections
                 # e.g. sometimes the impression is in the comparison section
@@ -109,23 +111,22 @@ def main(args):
                 # exist the radiologist has usually written the report
                 # in the comparison section
                 idx = -1
-                for sn in ('impression', 'findings',
-                           'last_paragraph', 'comparison'):
+                for sn in args.sections:
                     if sn in section_names:
                         idx = list_rindex(section_names, sn)
                         break
 
                 if idx == -1:
                     # we didn't find any sections we can use :(
-                    patient_studies.append([s_stem, ''])
-                    print(f'no impression/findings: {patient_path / s}')
+                    patient_studies.append([s_stem, ""])
+                    print(f"no usable section found: {patient_path / s}")
+                    print(section_names)
                 else:
                     # store the text of the conclusion section
                     patient_studies.append([s_stem, sections[idx].strip()])
 
                 study_sectioned = [s_stem]
-                for sn in ('impression', 'findings',
-                           'last_paragraph', 'comparison'):
+                for sn in args.sections:
                     if sn in section_names:
                         idx = list_rindex(section_names, sn)
                         study_sectioned.append(sections[idx].strip())
@@ -135,17 +136,18 @@ def main(args):
     # write distinct files to facilitate modular processing
     if len(patient_studies) > 0:
         # write out a single CSV with the sections
-        with open(output_path / 'mimic_cxr_sectioned.csv', 'w') as fp:
+        with open(output_path / "mimic_cxr_sectioned.csv", "w") as fp:
             csvwriter = csv.writer(fp)
             # write header
-            csvwriter.writerow(['study', 'impression', 'findings',
-                                'last_paragraph', 'comparison'])
+            csvwriter.writerow(
+                ["study"] + args.sections
+            )
             for row in study_sections:
                 csvwriter.writerow(row)
 
         if args.no_split:
             # write all the reports out to a single file
-            with open(output_path / f'mimic_cxr_sections.csv', 'w') as fp:
+            with open(output_path / f"mimic_cxr_sections.csv", "w") as fp:
                 csvwriter = csv.writer(fp)
                 for row in patient_studies:
                     csvwriter.writerow(row)
@@ -156,12 +158,12 @@ def main(args):
 
             while n < len(patient_studies):
                 n_fn = n // jmp
-                with open(output_path / f'mimic_cxr_{n_fn:02d}.csv', 'w') as fp:
+                with open(output_path / f"mimic_cxr_{n_fn:02d}.csv", "w") as fp:
                     csvwriter = csv.writer(fp)
-                    for row in patient_studies[n:n+jmp]:
+                    for row in patient_studies[n : n + jmp]:
                         csvwriter.writerow(row)
                 n += jmp
 
 
-if __name__ == '__main__':
+if __name__ == "__main__":
     main(sys.argv[1:])
